@@ -1,0 +1,165 @@
+Capstone Project Presentation
+========================================================
+author: Marty Gaupp
+date: Nov 2015
+font-family: 'Helvetica'
+
+<small> __Problem Statement__:  Are __bad__ ratings (those receiving 1 star) more useful than __good__ ratings (those receiving 5 stars), or vice versa? </small>
+
+<small> I will analyze the Yelp reviews dataset to answer this question so that I can help users of Yelp determine what types of reviews they should trust more - good ratings or bad ratings.</small>
+
+```{r, echo=FALSE, results='hide', warning=FALSE, message=FALSE}
+# packages that need to be loaded
+library(dplyr)
+library(ggplot2)
+library(knitr)
+```
+
+Methods and Data - Exploratory Analysis
+========================================================
+
+<small> Results of exploratory analysis on the `votes.useful` variable in the _Reviews_ dataset </small>
+
+![Star Box Plot](StarBoxPlot.png)
+
+<small> Too hard to tell which rating is more useful, so turn to statistics... </small>
+
+Methods and Data - Aggregate Level
+========================================================
+
+- <small> Count useful votes for each star rating - determine relative usefulness: </small>
+
+<small>
+$$
+\mbox{Relative_Usefulness} = \frac{\mbox{Useful_Vote_Count}}{\mbox{Rating_Count}}
+$$
+</small>
+
+- <small> The following data and hypothesis test results: </small>
+
+```{r cache=TRUE, echo=FALSE}
+ReviewData <- readRDS("ReviewStar.rds")
+by_star <- group_by(ReviewData, stars)
+vote_summ_star <- summarize(by_star,
+                            Rating_Count = n(),
+                            Useful_Vote_Count = sum(votes.useful, na.rm=TRUE))
+vote_summ_star$Relative_Usefulness <- vote_summ_star$Useful_Vote_Count/vote_summ_star$Rating_Count
+vote_summ_star_15 <- subset(vote_summ_star, stars %in% c(1,5))
+#vote_summ_star_15
+kable(vote_summ_star_15, digits = 2, align = 'c', format.args = list(big.mark = ','))
+```
+
+```{r, echo=FALSE,results='hide'}
+one_star_only <- subset(ReviewData, stars==1)
+five_star_only <- subset(ReviewData, stars==5)
+agg_test <- t.test(one_star_only$votes.useful, five_star_only$votes.useful,  alternative = "greater")
+agg_test_stat <- round(agg_test$statistic, 3)
+agg_test_pval <- round(agg_test$p.value, 3)
+```
+
+<small>
+$$\begin{array}{l}
+\mbox{H}_0: \mbox{Relative Usefulness}_1 \leq \mbox{Relative Usefulness}_5 \\
+\mbox{H}_1: \mbox{Relative Usefulness}_1 > \mbox{Relative Usefulness}_5 \\
+\mbox{test stat: } `r agg_test_stat` \\
+\mbox{p-value: } `r agg_test_pval` \mbox{   therefore reject H}_0 \mbox{ and conclude H}_1 \\
+\end{array}
+$$
+</small>
+
+- <small> Clearly, 1 star ratings are more useful than 5 star ratings </small>
+
+Methods and Data - Business Level
+========================================================
+
+- <small> Determine usefulness counts/percents at the business level - results:</small>
+
+```{r, cahce=TRUE, echo=FALSE, warning=FALSE}
+business_star_summ <- ReviewData %>%
+  group_by(business_id) %>%
+  summarize(nAllStar = n(),
+            nAllVote = sum(votes.useful),
+            n1Star = sum(stars==1),
+            n1Vote = sum(votes.useful[stars==1]),
+            n2Star = sum(stars==2),
+            n2Vote = sum(votes.useful[stars==2]),
+            n3Star = sum(stars==3),
+            n3Vote = sum(votes.useful[stars==3]),
+            n4Star = sum(stars==4),
+            n4Vote = sum(votes.useful[stars==4]),
+            n5Star = sum(stars==5),
+            n5Vote = sum(votes.useful[stars==5]))
+
+# determine when votes for 1 star ratings are more useful than votes for 5 star ratings
+#  do this by counts: # useful 1 star votes > # useful 5 star votes
+business_star_summ$OneCntBetter = ifelse((business_star_summ$n1Vote > business_star_summ$n5Vote),1,0)
+#  do this by percent : number of useful votes divided by number of reviews
+#  but need to worry about division by 0 so treat 1 more useful than 5 if either:
+#    # 5 star ratings == 0 AND # 1 star votes != 0
+#    # 5 star ratings != 0 AND # 1 star ratings != 0 AND ([(# 1 star votes)/(# 1 star ratings)] > [(# 5 star votes)/(# 5 star ratings)])
+business_star_summ$OnePercBetter = ifelse((business_star_summ$n5Star == 0 & business_star_summ$n1Vote != 0) | ((business_star_summ$n5Star != 0) & (business_star_summ$n1Star != 0) & (business_star_summ$n1Vote/business_star_summ$n1Star > business_star_summ$n5Vote/business_star_summ$n5Star)),1,0)
+
+# determine when votes for 5 star ratings are more useful than votes for 1 star ratings
+#  do this by counts: # useful 5 star votes > # useful 1 star votes
+business_star_summ$FiveCntBetter = ifelse((business_star_summ$n5Vote > business_star_summ$n1Vote),1,0)
+#  do this by percent : number of useful votes divided by number of reviews
+#  but need to worry about division by 0 so treat 5 more useful than 1 if either:
+#    # 1 star ratings == 0 AND # 5 star votes != 0
+#    # 1 star ratings != 0 AND # 5 star ratings != 0 AND ([(# 5 star votes)/(# 5 star ratings)] > [(# 1 star votes)/(# 1 star ratings)])
+business_star_summ$FivePercBetter = ifelse((business_star_summ$n1Star == 0 & business_star_summ$n5Vote != 0) | ((business_star_summ$n1Star != 0) & (business_star_summ$n5Star != 0) & (business_star_summ$n5Vote/business_star_summ$n5Star > business_star_summ$n1Vote/business_star_summ$n1Star)),1,0)
+
+# sum up each of the columns in the business_star_summ data.frame
+sum_business_star_summ <- colSums(Filter(is.numeric, business_star_summ))
+keep = c(rep(FALSE,12),rep(TRUE,4))
+sum_business_star_table <- sum_business_star_summ[keep]
+# access a specific element using sum_business_star_summ['NAME']
+NumOfBusinesses <- nrow(business_star_summ)
+sum_business_star_table$NumOfBusinesses <- NumOfBusinesses
+sum_business_star_table <- data.frame(sum_business_star_table)
+kable(sum_business_star_table, digits = 0, align = 'c', format.args = list(big.mark = ','))
+```
+
+- <small> Conduct hypotheses tests on counts & percents:</small>
+
+```{r, echo=FALSE,results='hide'}
+# test the difference between the relative usefulness of 1 star ratings and 5 star ratings by vote COUNT more useful 
+bus_count_only <- subset(business_star_summ, OneCntBetter==1 | FiveCntBetter==1)
+count_test <- t.test(bus_count_only$OneCntBetter, bus_count_only$FiveCntBetter, alternative = "less")
+count_test_stat <- round(count_test$statistic, 3)
+count_test_pval <- round(count_test$p.value, 3)
+```
+
+```{r, echo=FALSE,results='hide'}
+# test the difference between the relative usefulness of 1 star ratings and 5 star ratings by relative PERCENT more useful
+bus_percent_only <- subset(business_star_summ, OnePercBetter==1 | FivePercBetter==1)
+percent_test <- t.test(bus_percent_only$OnePercBetter, bus_percent_only$FivePercBetter, alternative = "less")
+percent_test_stat <- round(percent_test$statistic, 3)
+percent_test_pval <- round(percent_test$p.value, 3)
+```
+
+<small>
+$$\begin{array}{l}
+\mbox{H}_0: \mbox{# 1 Star Counts/Percents More Useful} \geq \mbox{# 5 Star Counts/Percents More Useful} \\
+\mbox{H}_1: \mbox{# 1 Star Counts/Percents More Useful} < \mbox{# 5 Star Counts/Percents More Useful} \\
+\mbox{test stat: } `r count_test_stat` \mbox{ and } `r percent_test_stat` \\
+\mbox{p-value: } `r count_test_pval` \mbox{ and } `r percent_test_pval` \mbox{   therefore reject H}_0 \mbox{ and conclude H}_1 \\
+\end{array}
+$$
+</small>
+
+- <small> In both cases, 5 star ratings are more useful than 1 star ratings </small>
+
+Results and Discussion
+========================================================
+
+- <small> Contradictory results </small>
+  - <small> In aggregate: 1 star ratings are more useful than 5 star ratings </small>
+  - <small> At business level: 5 star ratings more useful than 1 star ratings </small>
+- <small> Contradiction due to _Simpson's paradox_ </small>
+  - <small> Statitistical result that appears in one group of data but then reverses itself when the individual groups are combined </small>
+- <small> Overall conclusion </small>
+  - <small> Best to trust ratings at the individual business level </small>
+      - <small> 5 star ratings tend to be more useful than 1 star ratings </small>
+  - <small> But... if it's a close result, might still have to take a gamble </small>
+      - <small> Look at the text of the votes </small>
+      - <small> Look at the recency of the votes - trust more current ones </small>
