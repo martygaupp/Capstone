@@ -1,0 +1,253 @@
+---
+title: "Data Science Capstone Project"
+author: "Marty Gaupp"
+output: pdf_document
+---
+
+```{r, echo=FALSE, results='hide', warning=FALSE, message=FALSE}
+# packages that need to be loaded
+library(dplyr)
+library(ggplot2)
+library(knitr)
+```
+
+# Title - How Useful Is This Stuff Anyways?
+
+For my Capstone Project in the Data Science Specialization at Johns Hopkins I will investigate the usefulness of the various ratings in the Review file.  Specifically, are bad ratings (those only awarded __1__ star) more useful than good ratings (those awarded the max of __5__ stars), or vice versa.  Or, for that matter, does the usefulness of the rating matter?
+
+As it turns out, there is an apparent contradiction in the answer to this question that depends on how you look at the data.  At an aggregate level, when you look at the sum of all the usefulness votes for each star rating, it appears that bad ratings are more useful than good ratings.  However, at the individual business-level, the opposite seems true and a good rating appears to be more useful than a bad rating.
+
+What I've uncovered here is something called _Simpson's paradox_, a phenomenon in which a statistical result appears in one group of data but then disappears or completely reverses itself when the individual groups are combined.
+
+# Introduction
+
+__Problem Statement__:  Are bad ratings (those receiving 1 star) more useful than good ratings (those receiving 5 stars), or vice versa?
+
+I will be investigating the possible discrepancy between the usefulness of a bad rating and a good rating.  There are over 1.5 million reviews in the `yelp_academic_dataset_review.json` file.  The question is, are they really useful or just the rantings of random people whose latte's weren't served boiling hot?  Well, Yelp realizes that people's ratings should be verified.  As a result, Yelp includes the ability for people to rate a review as useful.  I want to look at the relative usefulness of bad ratings versus the relative usefulness of good ratings and see if one is statistically better than the other.
+
+Why bother with this line of inquiry?  Well, as a user of on-line reviews, I have been burned by apparently good ratings for a coffee shop only to receive over-priced lukewarm toilet water.  I'm also sure I've been missing out on diamonds in the rough because one bad rating really wasn't that accurate (or useful).  So, from a consumer standpoint, I think knowing which ratings I should "trust" more (because of their usefulness) might come in really handy the next time I'm in the mood for a good cup of Joe.
+
+# Methods and Data
+
+```{r cache=TRUE, echo=FALSE}
+ReviewData <- readRDS("ReviewStar.rds")
+```
+
+### Exploratory Analysis
+
+I took the _Reviews_ dataset, loaded it into a data.frame, and trimmed it down to just the pertinent variables for my analysis.  I then did some _exploratory analysis_ on the `votes.useful` variable and created a boxplot to compare the number of useful votes for each of the five star ratings:
+
+![Star Box Plot](StarBoxPlot.png)
+
+```{r, echo=FALSE, fig.height=4, fig.width=6}
+#here is the code to generate the graph:
+#png(file = "StarBoxPlot.png", bg = "transparent",  width = 600, height = 400)
+#xvar <- as.factor(ReviewData[,"stars"])
+#yvar <- ReviewData[,"votes.useful"]
+#xy <- data.frame(xvar,yvar)
+#g <- qplot(x = xvar, y = yvar, data = xy,
+#            xlab = "# stars",
+#            ylab = "# useful votes",
+#            main = "Useful Votes vs Star Ratings",
+#            geom = c("jitter","boxplot"),
+#            alpha = 0.1)
+#g + theme(legend.position="none", text=element_text(size=10))
+#dev.off()
+```
+
+Unfortunately, from the graph alone it is too hard to tell which rating is more useful.  As a matter of fact, the _boxes_ in the boxplot are almost indiscernible, probably because most ratings have very few or no useful votes associated with them.  Looks like I'll have to turn to actually counting votes and analyzing the numbers.
+
+### Aggregate Counts by Star Rating
+
+First I started by counting all the useful votes for each star rating.  The `dplyr` package and its `summarize` command was a real life-saver with this task.  Then I calculated the relative usefulness of each star rating using the following formula:
+
+$$
+\mbox{Relative\_Usefulness} = \frac{\mbox{Useful\_Vote\_Count}}{\mbox{Rating\_Count}}
+$$
+
+Here are the results:
+
+```{r, echo=FALSE}
+by_star <- group_by(ReviewData, stars)
+vote_summ_star <- summarize(by_star,
+                            Rating_Count = n(),
+                            Useful_Vote_Count = sum(votes.useful, na.rm=TRUE))
+vote_summ_star$Relative_Usefulness <- vote_summ_star$Useful_Vote_Count/vote_summ_star$Rating_Count
+kable(vote_summ_star, digits = 2, align = 'c', format.args = list(big.mark = ','))
+```
+
+\pagebreak
+
+The sums of the `Rating_Count` and `Useful_Vote_Count` columns were:
+
+```{r, echo=FALSE}
+sum_vote_summ_star <- colSums(vote_summ_star)
+keep = c(FALSE, TRUE, TRUE, FALSE)
+sum_vote_summ_star <- sum_vote_summ_star[keep]
+kable(sum_vote_summ_star, digits = 0, align = 'c', format.args = list(big.mark = ','))
+```
+
+```{r, echo=FALSE,results='hide'}
+one_star_only <- subset(ReviewData, stars==1)
+five_star_only <- subset(ReviewData, stars==5)
+agg_test <- t.test(one_star_only$votes.useful, five_star_only$votes.useful,  alternative = "greater")
+agg_test_stat <- round(agg_test$statistic, 3)
+agg_test_pval <- round(agg_test$p.value, 3)
+```
+
+Then, the question was, does the difference in relative usefulness between 1 star ratings and 5 star ratings actually represent a statistically significant difference?  Here's my formal hypothesis test:
+
+$$\begin{array}{l}
+\mbox{H}_0: \mbox{Relative Usefulness}_1 \leq \mbox{Relative Usefulness}_5 \\
+\mbox{H}_1: \mbox{Relative Usefulness}_1 > \mbox{Relative Usefulness}_5 \\
+\mbox{test stat: } `r agg_test_stat` \\
+\mbox{p-value: } `r agg_test_pval` \\
+\mbox{conclusion: reject H}_0 \mbox{ and conclude H}_1\\
+\end{array}
+$$
+
+Clearly, there is a statistically significant difference and it appears that __1 star ratings__ are more useful than __5 star ratings__.  
+
+### Separate Star Rating Counts by Individual Businesses
+
+Instead of aggregating all the counts together, let's look at the data at the separate business level.  I want to determine at the individual business level how many times a 1 star rating is relatively more useful than a 5 star rating.  As before, I exploited the power of the `dplyr` package and its `summarize` command.  Once the data was summarized, I went through it to determine, at the individual business level, when a 1 star rating was more useful than a 5 star rating or vice versa.  Basically, I counted a 1 star rating more useful in two ways, by raw counts of the useful votes and then by relative usefulness:
+
+* OneCountMoreUseful = `TRUE` if # useful 1 star votes > # useful 5 star votes
+* OnePercMoreUseful = `TRUE` if relative usefulness of 1 star votes > relative usefulness of 5 star votes:
+$$ \frac{\mbox{\# 1 Star Votes}}{\mbox{\# 1 Star Reviews}}>\frac{\mbox{\# 5 Star Votes}}{\mbox{\# 5 Star Reviews}}$$
+
+The usefulness measure is the same calculation that I used above in the aggregate analysis; it's just the number of useful votes divided by the number of reviews.  At the individual business level, however, an obvious problem with this calculation is the potential for a division by zero error.  So, to avoid getting a bunch of N/A's, I won't do this division if either denominator is zero.  Also, I said that 1 was relatively more useful than 5 if there are no 5 star ratings but there are 1 star ratings.
+
+To calculate the same thing for the 5 star ratings, I just switched the 1's and 5's to get data for when a 5 star rating is more useful than a 1 star rating.
+
+Finally, I added up all the results over all the business and got the following:
+
+```{r, cahce=TRUE, echo=FALSE, warning=FALSE}
+business_star_summ <- ReviewData %>%
+  group_by(business_id) %>%
+  summarize(nAllStar = n(),
+            nAllVote = sum(votes.useful),
+            n1Star = sum(stars==1),
+            n1Vote = sum(votes.useful[stars==1]),
+            n2Star = sum(stars==2),
+            n2Vote = sum(votes.useful[stars==2]),
+            n3Star = sum(stars==3),
+            n3Vote = sum(votes.useful[stars==3]),
+            n4Star = sum(stars==4),
+            n4Vote = sum(votes.useful[stars==4]),
+            n5Star = sum(stars==5),
+            n5Vote = sum(votes.useful[stars==5]))
+
+# determine when votes for 1 star ratings are more useful than votes for 5 star ratings
+#  do this by counts: # useful 1 star votes > # useful 5 star votes
+business_star_summ$OneCountMoreUseful = ifelse((business_star_summ$n1Vote > business_star_summ$n5Vote),1,0)
+#  do this by percent : number of useful votes divided by number of reviews
+#  but need to worry about division by 0 so treat 1 more useful than 5 if either:
+#    # 5 star ratings == 0 AND # 1 star votes != 0
+#    # 5 star ratings != 0 AND # 1 star ratings != 0 AND ([(# 1 star votes)/(# 1 star ratings)] > [(# 5 star votes)/(# 5 star ratings)])
+business_star_summ$OnePercMoreUseful = ifelse((business_star_summ$n5Star == 0 & business_star_summ$n1Vote != 0) | ((business_star_summ$n5Star != 0) & (business_star_summ$n1Star != 0) & (business_star_summ$n1Vote/business_star_summ$n1Star > business_star_summ$n5Vote/business_star_summ$n5Star)),1,0)
+
+# determine when votes for 5 star ratings are more useful than votes for 1 star ratings
+#  do this by counts: # useful 5 star votes > # useful 1 star votes
+business_star_summ$FiveCountMoreUseful = ifelse((business_star_summ$n5Vote > business_star_summ$n1Vote),1,0)
+#  do this by percent : number of useful votes divided by number of reviews
+#  but need to worry about division by 0 so treat 5 more useful than 1 if either:
+#    # 1 star ratings == 0 AND # 5 star votes != 0
+#    # 1 star ratings != 0 AND # 5 star ratings != 0 AND ([(# 5 star votes)/(# 5 star ratings)] > [(# 1 star votes)/(# 1 star ratings)])
+business_star_summ$FivePercMoreUseful = ifelse((business_star_summ$n1Star == 0 & business_star_summ$n5Vote != 0) | ((business_star_summ$n1Star != 0) & (business_star_summ$n5Star != 0) & (business_star_summ$n5Vote/business_star_summ$n5Star > business_star_summ$n1Vote/business_star_summ$n1Star)),1,0)
+
+# sum up each of the columns in the business_star_summ data.frame
+sum_business_star_summ <- colSums(Filter(is.numeric, business_star_summ))
+keep = c(rep(FALSE,12),rep(TRUE,4))
+sum_business_star_table <- sum_business_star_summ[keep]
+# access a specific element using sum_business_star_summ['NAME']
+NumOfBusinesses <- nrow(business_star_summ)
+sum_business_star_table$NumOfBusinesses <- NumOfBusinesses
+sum_business_star_table <- data.frame(sum_business_star_table)
+kable(sum_business_star_table, digits = 0, align = 'c', format.args = list(big.mark = ','))
+```
+
+\pagebreak
+
+As with the aggregate results, let's see if there is a statistically significant difference in these numbers.  We'll look first at the difference between the relative usefulness of 1 star ratings compared to 5 star ratings by looking at the __count__ data:
+
+```{r, echo=FALSE,results='hide'}
+# test the difference between the relative usefulness of 1 star ratings and 5 star ratings by vote COUNT more useful 
+bus_count_only <- subset(business_star_summ, OneCountMoreUseful==1 | FiveCountMoreUseful==1)
+count_test <- t.test(bus_count_only$OneCountMoreUseful, bus_count_only$FiveCountMoreUseful, alternative = "less")
+count_test_stat <- round(count_test$statistic, 3)
+count_test_pval <- round(count_test$p.value, 3)
+```
+
+$$\begin{array}{l}
+\mbox{H}_0: \mbox{\# 1 Star Counts More Useful} \geq \mbox{\# 5 Star Counts More Useful} \\
+\mbox{H}_1: \mbox{\# 1 Star Counts More Useful} < \mbox{\# 5 Star Counts More Useful} \\
+\mbox{test stat: } `r count_test_stat` \\
+\mbox{p-value: } `r count_test_pval` \\
+\mbox{conclusion: reject H}_0 \mbox{ and conclude H}_1\\
+\end{array}
+$$
+
+Clearly, there is a statistically significant difference and it appears that the number of 1 star counts considered more useful is less than the number of 5 star counts considered more useful.
+
+Next, let's look at the difference based on the __percent__ data:
+
+```{r, echo=FALSE,results='hide'}
+# test the difference between the relative usefulness of 1 star ratings and 5 star ratings by relative PERCENT more useful
+bus_percent_only <- subset(business_star_summ, OnePercMoreUseful==1 | FivePercMoreUseful==1)
+percent_test <- t.test(bus_percent_only$OnePercMoreUseful, bus_percent_only$FivePercMoreUseful, alternative = "less")
+percent_test_stat <- round(percent_test$statistic, 3)
+percent_test_pval <- round(percent_test$p.value, 3)
+```
+
+$$\begin{array}{l}
+\mbox{H}_0: \mbox{\# 1 Star Percents More Useful} \geq \mbox{\# 5 Star Percents More Useful} \\
+\mbox{H}_1: \mbox{\# 1 Star Percents More Useful} < \mbox{\# 5 Star Percents More Useful} \\
+\mbox{test stat: } `r percent_test_stat` \\
+\mbox{p-value: } `r percent_test_pval` \\
+\mbox{conclusion: reject H}_0 \mbox{ and conclude H}_1\\
+\end{array}
+$$
+
+Again, there is a statistically significant difference and it appears that the number of times 1 star ratings are considered more useful is less than the number of times 5 star ratings are considered more useful from a percent usefulness stand point.
+
+The problem is, the previous two results at the business level are exactly __opposite__ of what I found when aggregating the results (in the previous section above).  What is going on?  It turns out that I've stumbled upon something known as _Simpson's paradox_.
+
+# Results
+
+My results seem to contradict themselves.  When you look at all the ratings as a whole, it appears that 1 star ratings are more useful than 5 star ratings.  But, when you look at the ratings at the individual business level and then accumulate those results over all the businesses, you actually get the complete opposite conclusion; namely that 5 star ratings are more useful than 1 star ratings.  This is a classic example of a phenomenon known as _Simpson's paradox_.  According to [Wikipedia](https://en.wikipedia.org/wiki/Simpson%27s_paradox), Simpson's paradox is:
+
+> a paradox in probability and statistics, in which a trend appears in different groups of data but disappears or reverses when these groups are combined.
+
+If you want another good place to read about Simpson's paradox check out [About.com](http://statistics.about.com/od/HelpandTutorials/a/What-Is-Simpsons-Paradox.htm)
+
+According to my analysis of the _Reviews_ dataset, the apparent better usefulness of good ratings (those awarded 5 stars) compared to bad ratings (those that only receive 1 star) that appear when I accumulate all the individual business level data reverses itself when all the data is aggregated and analyzed together.
+
+\pagebreak
+
+# Discussion
+
+So, are bad ratings (those receiving 1 star) more useful than good ratings (those receiving 5 stars)?  Well, it turns out, _it depends_ how you analyze the data.  In aggregate, it appears that bad ratings are more useful than good ratings.  However at the individual business level, the opposite seems true and a good rating appears to be more useful than a bad rating.
+
+As mentioned above, this phenomenon is known as Simpson's paradox.  This evident reversal of the usefulness of ratings can best be observed with the following simple numerical example.  Suppose you have three businesses with the following ratio of the number of good useful votes to the number of bad useful votes:
+
+$$\begin{array}{c}
+\mbox{10 - to - 1} \\
+\mbox{ 1 - to - 2} \\
+\mbox{ 1 - to - 2} \\
+\mbox{---------------} \\
+\mbox{12 - to - 5} \\
+\end{array}
+$$
+
+Taken alone, 2 out 3 times, the bad ratings (on the right) outweigh the good ratings (on the left).  However, when you add up all the ratings you get a total ratio of 12-to-5, and now the good ratings (on the left) appear to outweigh the bad ratings (on the left).  This is Simpson's paradox.
+
+What are the implications of this apparent paradox?  Well, it might be prudent to trust those ratings with _lots_ of useful votes.  Perhaps the apparent paradox occurs because when a bad rating is useful, it's _really_ useful; whereas good ratings are _barely_ more useful.  Let's take another look at the total star count:
+
+```{r, echo=FALSE}
+kable(vote_summ_star, digits = 2, align = 'c', format.args = list(big.mark = ','))
+```
+
+Notice that there are a lot more 5 star ratings than 1 star ratings, but that from a relative usefulness perspective, 1 star ratings are more useful.  So, when a 1 star rating is more useful, it is probably a __lot__ more useful.  However, when a 5 star rating is even a little more useful than the 1 star rating for a particular business, the fact that there are so many 5 star ratings compared to 1 star ratings means that at the individual business level there will be a lot more useful 5 star ratings than 1 star ratings.  
+
+So, again, what does this all mean?  It's probably best to trust the ratings at the individual business level.  If a business has more 1 star votes deemed useful than 5 star votes, that relative usefulness of those 1 star votes will probably be a lot higher than the relative usefulness of the 5 star votes, so I'd trust the 1 star votes and avoid the business.  However, if there are only a few ratings for a given business, chances are the 5 star votes will be more useful and we might have found a diamond in the rough.  Either way, if it's a close vote, you might still have to take a gamble; definitely not a first date kind-of place to experiment on.  Go with a sure thing and save the experimenting for when she's committed to you!
